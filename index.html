@@ -1,0 +1,78 @@
+from flask import Flask, request, jsonify, render_template
+import qrcode
+import uuid
+import os
+from datetime import datetime
+
+app = Flask(__name__)
+
+# Pasta de QR codes
+QR_CODES_DIR = os.path.join('static', 'qr_codes')
+os.makedirs(QR_CODES_DIR, exist_ok=True)
+
+# Banco em memória (OBS: reseta no deploy)
+bilhetes_db = {}
+
+@app.route('/')
+@app.route('/geradordebilhetescptm')
+def index():
+    return render_template('index.html')
+
+
+@app.route('/gerar_qr', methods=['POST'])
+def gerar_qr():
+    data = request.json
+    num_qrs = int(data.get('num_qrs', 1))
+
+    if num_qrs > 1000:
+        return jsonify({'error': 'Máximo 1000 QR codes'}), 400
+
+    qr_codes = []
+
+    for _ in range(num_qrs):
+        id_bilhete = str(uuid.uuid4())
+
+        bilhetes_db[id_bilhete] = {
+            "valido": True,
+            "criado": datetime.now().isoformat()
+        }
+
+        qr_data = f"APP:{id_bilhete}"
+
+        qr = qrcode.QRCode(box_size=10, border=4)
+        qr.add_data(qr_data)
+        qr.make(fit=True)
+
+        img = qr.make_image(fill_color="black", back_color="white")
+
+        filename = f"{id_bilhete}.png"
+        path = os.path.join(QR_CODES_DIR, filename)
+        img.save(path)
+
+        qr_codes.append({
+            "id": id_bilhete,
+            "url": f"/static/qr_codes/{filename}",
+            "data": qr_data
+        })
+
+    return jsonify({"qr_codes": qr_codes})
+
+
+@app.route('/validar_qr')
+def validar_qr():
+    qr_data = request.args.get('data')
+
+    if not qr_data or ":" not in qr_data:
+        return jsonify({"valido": False})
+
+    try:
+        id_bilhete = qr_data.split(":")[1]
+        valido = bilhetes_db.get(id_bilhete, {}).get("valido", False)
+        return jsonify({"valido": valido})
+    except:
+        return jsonify({"valido": False})
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
